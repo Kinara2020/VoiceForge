@@ -42,6 +42,8 @@ export default function VoiceRecorder({ onRecordingReady, disabled = false }) {
         if (event.data.size > 0) chunksRef.current.push(event.data);
       };
       recorder.onstop = () => {
+        window.clearInterval(timerRef.current);
+        setIsRecording(false);
         const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
         const url = URL.createObjectURL(blob);
         setAudioUrl((previous) => {
@@ -76,9 +78,7 @@ export default function VoiceRecorder({ onRecordingReady, disabled = false }) {
   }
 
   function stopRecording() {
-    window.clearInterval(timerRef.current);
     recorderRef.current?.stop();
-    setIsRecording(false);
   }
 
   React.useEffect(() => {
