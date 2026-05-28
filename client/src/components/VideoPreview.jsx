@@ -60,8 +60,8 @@ export default React.forwardRef(function VideoPreview({
 
     // Derive canvas colors from the active theme
     const isDark = theme === "dark";
-    const bgColor   = isDark ? "`#0f172a`" : "`#dfe8df`";
-    const textColor = isDark ? "`#e2e8f0`" : "`#16201d`";
+    const bgColor   = isDark ? "#0f172a" : "#dfe8df";
+    const textColor = isDark ? "#e2e8f0" : "#16201d";
     const mouthColor = isDark ? "rgba(226, 232, 240, 0.82)" : "rgba(22, 32, 29, 0.82)";
 
     function draw(timestamp) {
