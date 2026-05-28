@@ -1,6 +1,7 @@
 // Draws the webcam and MVP lip-sync animation onto a canvas preview.
 import React from "react";
 import { Loader2 } from "lucide-react";
+import { useTheme } from "./ThemeContext";
 
 export default React.forwardRef(function VideoPreview({
   webcamStream,
@@ -11,7 +12,10 @@ export default React.forwardRef(function VideoPreview({
 }, ref) {
   const videoRef = React.useRef(null);
   const animationRef = React.useRef(null);
-  const [modelStatus, setModelStatus] = React.useState("Fallback animation ready");
+  const [modelStatus, setModelStatus] = React.useState(
+    "Fallback animation ready",
+  );
+  const { theme } = useTheme();
 
   const calibrationRef = React.useRef(calibration);
   const isCalibratingRef = React.useRef(isCalibrating);
@@ -54,18 +58,28 @@ export default React.forwardRef(function VideoPreview({
     const context = canvas?.getContext("2d");
     if (!canvas || !context) return undefined;
 
+    // Derive canvas colors from the active theme
+    const isDark = theme === "dark";
+    const bgColor   = isDark ? "`#0f172a`" : "`#dfe8df`";
+    const textColor = isDark ? "`#e2e8f0`" : "`#16201d`";
+    const mouthColor = isDark ? "rgba(226, 232, 240, 0.82)" : "rgba(22, 32, 29, 0.82)";
+
     function draw(timestamp) {
-      context.fillStyle = "#dfe8df";
+      context.fillStyle = bgColor;
       context.fillRect(0, 0, canvas.width, canvas.height);
 
       const video = videoRef.current;
       if (video?.readyState >= 2) {
         context.drawImage(video, 0, 0, canvas.width, canvas.height);
       } else {
-        context.fillStyle = "#16201d";
+        context.fillStyle = textColor;
         context.font = "600 24px Inter, sans-serif";
         context.textAlign = "center";
-        context.fillText("Waiting for webcam", canvas.width / 2, canvas.height / 2);
+        context.fillText(
+          "Waiting for webcam",
+          canvas.width / 2,
+          canvas.height / 2,
+        );
       }
 
       const drawMouth = isSpeaking || isCalibratingRef.current;
@@ -88,7 +102,7 @@ export default React.forwardRef(function VideoPreview({
         const radiusY = mouthOpen * scale;
 
         context.save();
-        context.fillStyle = "rgba(22, 32, 29, 0.82)";
+        context.fillStyle = mouthColor;
         context.beginPath();
         context.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2);
         context.fill();
@@ -100,19 +114,32 @@ export default React.forwardRef(function VideoPreview({
 
     animationRef.current = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(animationRef.current);
-  }, [ref, isSpeaking]);
+  }, [ref, isSpeaking, theme]);
 
   return (
-    <section className="rounded-lg border border-ink/10 bg-white p-5 shadow-soft">
+    <section className="rounded-lg border border-ink/10 bg-white p-5 shadow-soft dark:border-border dark:bg-surface dark:text-neutral-100 dark:shadow-soft-dk">
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-bold">Lip-synced output</h2>
-          <p className="mt-1 text-sm text-ink/65">{modelStatus}</p>
+          <p className="mt-1 text-sm text-ink/65 dark:text-muted">
+            {modelStatus}
+          </p>
         </div>
-        {isSpeaking && <Loader2 className="animate-spin text-coral" size={20} aria-hidden="true" />}
+        {isSpeaking && (
+          <Loader2
+            className="animate-spin text-coral"
+            size={20}
+            aria-hidden="true"
+          />
+        )}
       </div>
       <video ref={videoRef} autoPlay muted playsInline className="hidden" />
-      <canvas ref={ref} width="960" height="540" className="aspect-video w-full rounded-md bg-ink object-cover" />
+      <canvas
+        ref={ref}
+        width="960"
+        height="540"
+        className="aspect-video w-full rounded-md bg-black object-cover"
+      />
       {audioUrl && (
         <audio className="mt-4 w-full" controls src={audioUrl} autoPlay>
           <track kind="captions" />
