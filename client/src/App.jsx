@@ -14,13 +14,33 @@ const tabs = [
   { id: "settings",   label: "Settings",    icon: SettingsIcon },
 ];
 
+const DEFAULT_TAB = "onboarding";
+const tabIds = new Set(tabs.map((tab) => tab.id));
+
+function getSavedTab() {
+  try {
+    const saved = localStorage.getItem("voiceforge:activeTab");
+    return tabIds.has(saved) ? saved: DEFAULT_TAB;
+  } catch {
+    return DEFAULT_TAB;
+  }
+}
+
+function saveActiveTab(tab) {
+  try {
+    localStorage.setItem("voiceforge:activeTab", tab);
+  } catch {
+    // Storage can be unavailable in private or restricted browser contexts.
+  }
+}
+
 export default function App() {
-  const initialTab = localStorage.getItem("voiceforge:activeTab") || "onboarding";
-  const [activeTab, setActiveTab] = React.useState(initialTab);
+  const [activeTab, setActiveTab] = React.useState(getSavedTab);
   const { theme, toggleTheme } = useTheme();
 
   function selectTab(tab) {
-    localStorage.setItem("voiceforge:activeTab", tab);
+    if (!tabIds.has(tab)) return;
+    saveActiveTab(tab);
     setActiveTab(tab);
   }
 
