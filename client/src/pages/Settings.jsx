@@ -62,8 +62,7 @@ export default function Settings() {
         </p>
         <h2 className="mt-2 text-3xl font-bold">Settings</h2>
         <p className="mt-3 max-w-3xl text-base leading-7 text-white/75">
-          Store your ElevenLabs key for local experiments and manage voice
-          profiles saved in this browser.
+          Manage voice profiles saved in this browser.
         </p>
       </section>
       {dbError && (
