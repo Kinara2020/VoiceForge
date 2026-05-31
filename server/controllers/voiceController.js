@@ -68,8 +68,6 @@ export async function speak(request, response, next) {
   try {
     const apiKey = requireApiKey(request);
     const { text, voice_id: voiceId, voice_settings } = request.body;
-    const apiKey = requireApiKey();
-    const { text, voice_id: voiceId } = request.body;
 
     if (!text || !voiceId) {
       response.status(400).json({ error: "Both text and voice_id are required." });
@@ -92,10 +90,8 @@ export async function speak(request, response, next) {
     }
 
     const mergedSettings = { ...defaultVoiceSettings, ...sanitizedSettings };
-
-    const elevenResponse = await fetch(`${ELEVENLABS_BASE_URL}/text-to-speech/${voiceId}`, {
     const speechId = Math.random().toString(36).substring(2, 15);
-    pendingStreams.set(speechId, { text, voiceId, apiKey });
+    pendingStreams.set(speechId, { text, voiceId, apiKey, mergedSettings });
 
     // Set a timeout to clean up if the stream is never requested within 60s
     setTimeout(() => {
@@ -124,7 +120,7 @@ export async function streamSpeech(request, response, next) {
     // Clean up immediately after retrieving parameters to prevent memory leaks
     pendingStreams.delete(speechId);
 
-    const { text, voiceId, apiKey } = streamData;
+    const { text, voiceId, apiKey, mergedSettings } = streamData;
 
     const elevenResponse = await fetch(`${ELEVENLABS_BASE_URL}/text-to-speech/${voiceId}/stream`, {
       method: "POST",
