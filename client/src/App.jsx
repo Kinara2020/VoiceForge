@@ -80,7 +80,7 @@ export default function App() {
               })}
             </nav>
 
-            {/* ── Dark / Light mode toggle ──────────────────────────────── */}
+            {/* Dark / Light mode toggle */}
             <button
               type="button"
               onClick={toggleTheme}

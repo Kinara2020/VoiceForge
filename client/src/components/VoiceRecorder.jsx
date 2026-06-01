@@ -153,7 +153,7 @@ export default function VoiceRecorder({ onRecordingReady, disabled = false }) {
       )}
       <div className="mt-4 flex items-center gap-2 text-sm text-ink/60 dark:text-muted">
         <Upload size={16} aria-hidden="true" />
-        Upload starts after you press “Clone voice”.
+        Upload starts after you press "Clone voice".
       </div>
     </section>
   );
