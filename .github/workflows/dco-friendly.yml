@@ -6,7 +6,7 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
+  pull-requests: write
   issues: write
 
 concurrency:
@@ -40,12 +40,20 @@ jobs:
                 await github.rest.issues.getLabel({ owner, repo, name });
               } catch (error) {
                 if (error.status === 404) {
-                  await github.rest.issues.createLabel({
-                    owner,
-                    repo,
-                    name,
-                    color: labels[name]
-                  });
+                  try {
+                    await github.rest.issues.createLabel({
+                      owner,
+                      repo,
+                      name,
+                      color: labels[name]
+                    });
+                  } catch (createError) {
+                    if (createError.status === 403) {
+                      core.warning(`Could not create label "${name}": ${createError.message}`);
+                      return;
+                    }
+                    throw createError;
+                  }
                 } else {
                   throw error;
                 }
@@ -54,13 +62,25 @@ jobs:
 
             async function addLabel(name) {
               await ensureLabel(name);
-              await github.rest.issues.addLabels({ owner, repo, issue_number, labels: [name] });
+              try {
+                await github.rest.issues.addLabels({ owner, repo, issue_number, labels: [name] });
+              } catch (error) {
+                if (error.status === 403) {
+                  core.warning(`Could not add label "${name}": ${error.message}`);
+                  return;
+                }
+                throw error;
+              }
             }
 
             async function removeLabel(name) {
               try {
                 await github.rest.issues.removeLabel({ owner, repo, issue_number, name });
               } catch (error) {
+                if (error.status === 403) {
+                  core.warning(`Could not remove label "${name}": ${error.message}`);
+                  return;
+                }
                 if (error.status !== 404) throw error;
               }
             }
@@ -106,17 +126,27 @@ jobs:
             if (existing && existing.body.trim() === body.trim()) return;
 
             if (existing) {
-              await github.rest.issues.updateComment({
-                owner,
-                repo,
-                comment_id: existing.id,
-                body
-              });
+              try {
+                await github.rest.issues.updateComment({
+                  owner,
+                  repo,
+                  comment_id: existing.id,
+                  body
+                });
+              } catch (error) {
+                if (error.status === 403) core.warning(`Could not update DCO comment: ${error.message}`);
+                else throw error;
+              }
             } else {
-              await github.rest.issues.createComment({
-                owner,
-                repo,
-                issue_number,
-                body
-              });
+              try {
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number,
+                  body
+                });
+              } catch (error) {
+                if (error.status === 403) core.warning(`Could not create DCO comment: ${error.message}`);
+                else throw error;
+              }
             }
