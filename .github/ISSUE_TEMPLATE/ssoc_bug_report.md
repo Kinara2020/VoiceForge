@@ -2,7 +2,7 @@
 name: SSOC Bug Report
 about: Report a bug or unexpected behavior
 title: "[BUG] "
-labels: SSoC26, bug
+labels: bug
 ---
 
 ## 🚀 Program

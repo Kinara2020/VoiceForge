@@ -2,7 +2,7 @@
 name: NSOC Bug Report
 about: Report a bug or unexpected behavior
 title: "[BUG] "
-labels: nsoc26, bug
+labels: bug
 ---
 
 ## 🚀 Program

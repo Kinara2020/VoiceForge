@@ -2,7 +2,7 @@
 name: SSOC Feature Request
 about: Suggest a new feature or improvement for VoiceForge
 title: "feat: "
-labels: SSoC26, enhancement
+labels: enhancement
 assignees: ""
 ---
 

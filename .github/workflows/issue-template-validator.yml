@@ -110,16 +110,17 @@ jobs:
 
             if (!matchedProgram) {
               templateProblems.push('Please select one program template: GSSoC, NSOC, SSOC, or ELUSOC.');
-            } else {
-              labelsToAdd.push(matchedProgram.label);
             }
 
             if (!isBugTemplate && !isFeatureTemplate) {
               templateProblems.push('Please use the mandatory bug report or feature request issue template.');
             }
 
-            if (isBugTemplate) labelsToAdd.push('bug');
-            if (isFeatureTemplate) labelsToAdd.push('enhancement');
+            if (templateProblems.length === 0) {
+              labelsToAdd.push(matchedProgram.label);
+              if (isBugTemplate) labelsToAdd.push('bug');
+              if (isFeatureTemplate) labelsToAdd.push('enhancement');
+            }
 
             if ((body || '').replace(/<!--[\s\S]*?-->/g, '').trim().length < 80) {
               qualityProblems.push('Please add enough detail so maintainers can review this issue.');

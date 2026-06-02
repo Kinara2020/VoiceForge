@@ -2,7 +2,7 @@
 name: GSSoC Bug Report
 about: Report a bug or unexpected behavior
 title: "[BUG] "
-labels: gssoc26, bug
+labels: bug
 ---
 
 ## 🚀 Program
