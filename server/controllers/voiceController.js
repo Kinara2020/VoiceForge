@@ -1,10 +1,22 @@
 // Implements ElevenLabs voice cloning and text-to-speech proxy handlers.
+import { randomUUID } from "node:crypto";
+
 const ELEVENLABS_BASE_URL = "https://api.elevenlabs.io/v1";
 
 // ElevenLabs bills by character count. This cap prevents a single request
 // from consuming a large share of the monthly quota. Configurable via the
 // SPEAK_TEXT_MAX_LENGTH environment variable; defaults to 2000 characters.
 const SPEAK_TEXT_MAX_LENGTH = parseInt(process.env.SPEAK_TEXT_MAX_LENGTH, 10) || 2000;
+
+// Each pending stream holds a caller-supplied ElevenLabs API key in memory
+// until the audio is streamed or the entry expires. Cap the number of
+// concurrent entries so a burst of /speak calls cannot grow the Map without
+// bound and exhaust process memory. Configurable via PENDING_STREAMS_MAX;
+// defaults to 1000 entries.
+const PENDING_STREAMS_MAX = parseInt(process.env.PENDING_STREAMS_MAX, 10) || 1000;
+
+// A pending stream is discarded if it is not consumed within this window.
+const PENDING_STREAM_TTL_MS = parseInt(process.env.PENDING_STREAM_TTL_MS, 10) || 60000;
 
 // Callers must supply their own ElevenLabs key via the X-ElevenLabs-Api-Key
 // request header. The server no longer falls back to its own environment key
@@ -68,7 +80,32 @@ export async function cloneVoice(request, response, next) {
   }
 }
 
+// Maps speechId -> { text, voiceId, apiKey, mergedSettings, timeout }.
+// Keys are unguessable UUIDs (see speak) and entries are single-use.
 const pendingStreams = new Map();
+
+// Remove a pending stream and clear its expiry timer so timers do not pile up.
+function deletePendingStream(speechId) {
+  const entry = pendingStreams.get(speechId);
+  if (!entry) {
+    return undefined;
+  }
+  clearTimeout(entry.timeout);
+  pendingStreams.delete(speechId);
+  return entry;
+}
+
+// Drop the oldest entries until the store is below its configured cap. Map
+// preserves insertion order, so the first key is always the oldest.
+function evictOldestPendingStreams() {
+  while (pendingStreams.size >= PENDING_STREAMS_MAX) {
+    const oldestKey = pendingStreams.keys().next().value;
+    if (oldestKey === undefined) {
+      break;
+    }
+    deletePendingStream(oldestKey);
+  }
+}
 
 export async function speak(request, response, next) {
   try {
@@ -124,13 +161,21 @@ export async function speak(request, response, next) {
     }
 
     const mergedSettings = { ...defaultVoiceSettings, ...sanitizedSettings };
-    const speechId = Math.random().toString(36).substring(2, 15);
-    pendingStreams.set(speechId, { text, voiceId, apiKey, mergedSettings });
 
-    // Set a timeout to clean up if the stream is never requested within 60s
-    setTimeout(() => {
-      pendingStreams.delete(speechId);
-    }, 60000);
+    // Cryptographically secure, 128-bit identifier. Unlike Math.random(), this
+    // cannot be reproduced from a seed or enumerated by a co-located process,
+    // so the stored API key cannot be retrieved by guessing the stream key.
+    const speechId = randomUUID();
+
+    evictOldestPendingStreams();
+
+    const timeout = setTimeout(() => {
+      deletePendingStream(speechId);
+    }, PENDING_STREAM_TTL_MS);
+    // Do not keep the event loop alive solely for this cleanup timer.
+    timeout.unref?.();
+
+    pendingStreams.set(speechId, { text, voiceId, apiKey, mergedSettings, timeout });
 
     response.json({
       speechId,
@@ -152,7 +197,7 @@ export async function streamSpeech(request, response, next) {
     }
 
     // Clean up immediately after retrieving parameters to prevent memory leaks
-    pendingStreams.delete(speechId);
+    deletePendingStream(speechId);
 
     const { text, voiceId, apiKey, mergedSettings } = streamData;
 
