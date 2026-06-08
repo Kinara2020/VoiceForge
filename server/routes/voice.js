@@ -15,8 +15,8 @@ const speakLimiter = rateLimit({
 	handler: (_req, res) =>
 		res.status(429).json({ error: "Too Many Requests" })
 });
-router.get("/status", getStatus);
 
+router.get("/status", getStatus);
 router.post("/clone", upload.single("audio"), cloneVoice);
 router.post("/speak", speakLimiter, speak);
 router.get("/speak/stream/:speechId", streamSpeech);
