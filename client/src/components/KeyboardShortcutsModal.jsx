@@ -40,7 +40,6 @@ export default function KeyboardShortcutsModal({ isOpen, onClose }) {
   React.useEffect(() => {
     if (!isOpen) return;
 
-    // Save previously focused element
     previousFocusRef.current = document.activeElement;
 
     const focusableSelectors = [
@@ -89,16 +88,18 @@ export default function KeyboardShortcutsModal({ isOpen, onClose }) {
     }
 
     window.addEventListener("keydown", handleKeyDown);
-
-    // Move focus into modal on open
     modalRef.current?.focus();
 
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
-      // Restore focus to previously focused element on close
-      previousFocusRef.current?.focus();
     };
   }, [isOpen, onClose]);
+
+  React.useEffect(() => {
+    if (!isOpen && previousFocusRef.current) {
+      previousFocusRef.current.focus();
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -109,20 +110,16 @@ export default function KeyboardShortcutsModal({ isOpen, onClose }) {
       aria-labelledby={HEADING_ID}
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
     >
-      {/* Backdrop */}
       <div
         className="absolute inset-0 bg-black/50 dark:bg-black/70"
         onClick={onClose}
         aria-hidden="true"
       />
-
-      {/* Modal */}
       <div
         ref={modalRef}
         tabIndex={-1}
         className="relative w-full max-w-md rounded-xl border border-ink/10 bg-white shadow-lg outline-none dark:border-border dark:bg-surface"
       >
-        {/* Header */}
         <div className="flex items-center justify-between border-b border-ink/10 px-6 py-4 dark:border-border">
           <div className="flex items-center gap-2">
             <Keyboard size={18} aria-hidden="true" className="text-ink dark:text-neutral-200" />
@@ -142,8 +139,6 @@ export default function KeyboardShortcutsModal({ isOpen, onClose }) {
             <X size={16} aria-hidden="true" />
           </button>
         </div>
-
-        {/* Shortcuts list */}
         <div className="divide-y divide-ink/5 px-6 py-2 dark:divide-border">
           {SHORTCUTS.map((group) => (
             <div key={group.context} className="py-4">
@@ -175,8 +170,6 @@ export default function KeyboardShortcutsModal({ isOpen, onClose }) {
             </div>
           ))}
         </div>
-
-        {/* Footer */}
         <div className="flex items-center justify-between border-t border-ink/10 px-6 py-3 dark:border-border">
           <p className="text-xs text-ink/40 dark:text-neutral-500">
             Press{" "}
