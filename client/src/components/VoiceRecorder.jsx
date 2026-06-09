@@ -55,7 +55,7 @@ export default function VoiceRecorder({ onRecordingReady, disabled = false }) {
           if (previous) URL.revokeObjectURL(previous);
           return url;
         });
-        onRecordingReady(blob);
+        onRecordingReady(blob, duration);
         streamRef.current?.getTracks().forEach((track) => track.stop());
       };
 
@@ -222,6 +222,13 @@ export default function VoiceRecorder({ onRecordingReady, disabled = false }) {
           </audio>
         )}
       </div>
+      
+      {audioUrl && duration < 10 && (
+        <div className="mt-4 rounded-md border border-amber-400/40 bg-amber-50 p-3 text-sm font-semibold text-ink flex items-center gap-2 dark:bg-amber-900/20 dark:text-amber-300">
+          <CircleAlert size={18} aria-hidden="true" className="text-amber-500" />
+          <span>Recording is too short. Please record at least 10 seconds for best results.</span>
+        </div>
+        )}
 
       {recorderError && (
         <div className="mt-4 rounded-md border border-coral/40 bg-coral/10 p-3 text-sm font-semibold text-ink flex items-center gap-2">

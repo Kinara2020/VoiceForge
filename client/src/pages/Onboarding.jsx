@@ -7,6 +7,11 @@ import { hasApiKey } from "../utils/apiKeyStorage.js";
 
 export default function Onboarding({ onReady }) {
   const [recording, setRecording] = React.useState(null);
+  const [recordingDuration, setRecordingDuration] = React.useState(0);
+  function handleRecordingReady(blob, duration = 0) {
+    setRecording(blob);
+    setRecordingDuration(duration);
+  }
   const [voiceName, setVoiceName] = React.useState("VoiceForge Voice");
   const [successProfile, setSuccessProfile] = React.useState(null);
   const { cloneVoice, status, error: apiError } = useVoiceClone();
@@ -74,7 +79,7 @@ export default function Onboarding({ onReady }) {
   async function handleClone() {
     // 1. Strict validation guards: Don't run without API key or a recorded sample
     if (!hasKey || !recording) return;
-    
+    if (recordingDuration < 10) return;
     try {
       // 2. Perform real API call without overlapping mock declarations
       const profile = await cloneVoice(recording, voiceName);
@@ -177,7 +182,7 @@ export default function Onboarding({ onReady }) {
             </div>
           )}
 
-          <VoiceRecorder onRecordingReady={setRecording} disabled={isCloning} />
+          <VoiceRecorder onRecordingReady={handleRecordingReady} disabled={isCloning} />
 
           <section className="rounded-lg border border-ink/10 bg-white p-5 shadow-soft dark:border-border dark:bg-surface dark:shadow-soft-dk">
             <label className="block text-sm font-bold text-ink dark:text-neutral-100" htmlFor="voice-name">
@@ -194,7 +199,7 @@ export default function Onboarding({ onReady }) {
               <button
                 type="button"
                 onClick={handleClone}
-                disabled={isCloning || !hasKey || !recording}
+                disabled={isCloning || !hasKey || !recording || recordingDuration < 10}
                 className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-coral px-5 font-bold text-white transition hover:bg-coral/90 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {isCloning && <Loader2 className="animate-spin" size={18} />}
