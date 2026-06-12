@@ -13,7 +13,6 @@ import {
   deleteVoiceProfile,
   getSavedProfiles,
 } from "../hooks/useVoiceClone.js";
-import { useToast, ToastContainer } from "../components/useToast.jsx";
 
 function AudioPlayback({ blob }) {
   const [audioUrl, setAudioUrl] = React.useState(null);
@@ -40,7 +39,6 @@ export default function Settings() {
   const [dbError, setDbError] = React.useState("");
   const { toasts, showToast } = useToast();
   const [migratedNotice, setMigratedNotice] = React.useState(false);
-  const { toasts, showToast } = useToast();
   const [apiKey, setApiKeyInput] = React.useState(() => {
     try {
       return getApiKey();
