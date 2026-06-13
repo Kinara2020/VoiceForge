@@ -11,13 +11,15 @@ import { QuickReplies } from "./QuickReplies";
 import { SpeechHistory } from "./SpeechHistory";
 import { ToastContainer, useToast } from "./useToast.jsx";
 import { useSpeechHistory } from "../hooks/useSpeechHistory";
+import { LanguageSelector } from "./LanguageSelector.jsx";
+import { loadLanguage, persistLanguage } from "../utils/languages.js";
 
 const MAX_CHARS = 500;
 
 export default function VoiceForge() {
   const [inputText, setInputText] = useState("");
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const [language, setLanguage] = useState(() => localStorage.getItem("voiceforge:compose-language") || "en");
+  const [language, setLanguage] = useState(loadLanguage);
   const [historyOpen, setHistoryOpen] = useState(false);
   const drawerRef = useRef(null);
 
@@ -136,7 +138,7 @@ export default function VoiceForge() {
     }
   }, [charsLeft]);
   useEffect(() => {
-    localStorage.setItem("voiceforge:compose-language", language);
+    persistLanguage(language);
   }, [language]);
 
   function getCounterColor() {
@@ -282,20 +284,12 @@ export default function VoiceForge() {
 
           <div className="flex items-center gap-2">
             <label htmlFor="vf-language" className="text-sm font-medium text-neutral-600 dark:text-neutral-300">Language:</label>
-            <select
+            <LanguageSelector
               id="vf-language"
               value={language}
-              onChange={(e) => setLanguage(e.target.value)}
-              className="rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm text-neutral-700 dark:border-border dark:bg-black dark:text-neutral-100"
-            >
-              <option value="en">English</option>
-              <option value="hi">Hindi</option>
-              <option value="es">Spanish</option>
-              <option value="fr">French</option>
-              <option value="de">German</option>
-              <option value="pt">Portuguese</option>
-              <option value="ja">Japanese</option>
-            </select>
+              onChange={setLanguage}
+              compact
+            />
           </div>
 
           <div className="flex flex-wrap items-center gap-2">

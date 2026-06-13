@@ -1,6 +1,7 @@
 // Implements ElevenLabs voice cloning and text-to-speech proxy handlers.
 import crypto from "crypto";
 import { getIsMock } from "../utils/mock.js"; // adjust path to actual location
+import { isValidLanguageCode } from "../utils/languages.js";
 
 const ELEVENLABS_BASE_URL = "https://api.elevenlabs.io/v1";
 
@@ -192,6 +193,12 @@ export async function speak(request, response, next) {
       response.status(400).json({ error: "Text too long; maximum 500 characters for streaming." });
       return;
     }
+    if (!isValidLanguageCode(language_code)) {
+      response.status(400).json({
+        error: `Unsupported language code "${language_code}". See ElevenLabs eleven_multilingual_v2 docs for supported codes.`
+      });
+      return;
+    }
 
     const expiresAt = Date.now() + 60000;
     const token = encryptToken({ text, voiceId, apiKey, language_code, voice_settings, expiresAt });
@@ -231,11 +238,13 @@ export async function streamSpeech(request, response, next) {
         Accept: "audio/mpeg"
       },
       body: JSON.stringify({
-  text,
-  model_id: "eleven_multilingual_v2",
-  language_code,
-  voice_settings: voice_settings
-})
+        text,
+        model_id: "eleven_multilingual_v2",
+        // Only include language_code when explicitly set; omitting it
+        // lets ElevenLabs auto-detect the language from the input text.
+        ...(language_code ? { language_code } : {}),
+        voice_settings: voice_settings,
+      })
     });
 
     if (!elevenResponse.ok) {
