@@ -1,6 +1,7 @@
 // Implements ElevenLabs voice cloning and text-to-speech proxy handlers.
 import crypto from "crypto";
 import { getIsMock } from "../utils/mock.js"; // adjust path to actual location
+import { isValidLanguageCode } from "../utils/languages.js";
 
 const ELEVENLABS_BASE_URL = "https://api.elevenlabs.io/v1";
 
@@ -25,6 +26,12 @@ const STREAM_SECRET = process.env.STREAM_SECRET ?? (() => {
 const ENCRYPTION_KEY = crypto.scryptSync(STREAM_SECRET, "voiceforge-stream-salt", 32);
 const IV_LENGTH = 12;
 const ALGORITHM = "aes-256-gcm";
+
+function createTimeoutSignal(ms = 30000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  return { signal: controller.signal, clear: () => clearTimeout(timer) };
+}
 
 function encryptToken(payload) {
   const iv = crypto.randomBytes(IV_LENGTH);
@@ -151,11 +158,25 @@ export async function cloneVoice(request, response, next) {
     const safeFileName = sanitizeUploadFileName(audioFile.originalname);
     formData.append("files", new Blob([audioFile.buffer], { type: audioFile.mimetype }), safeFileName);
 
-    const elevenResponse = await fetch(`${ELEVENLABS_BASE_URL}/voices/add`, {
-      method: "POST",
-      headers: { "xi-api-key": apiKey },
-      body: formData
-    });
+    const { signal: cloneSignal, clear: clearClone } = createTimeoutSignal();
+      let elevenResponse;
+      try {
+        elevenResponse = await fetch(`${ELEVENLABS_BASE_URL}/voices/add`, {
+        method: "POST",
+        headers: { "xi-api-key": apiKey },
+        body: formData,
+        signal: cloneSignal
+      });
+      clearClone();
+    } catch (error) {
+      if (error.name === "AbortError") {
+        response.status(504).json({
+          error: "Voice clone request timed out. Please try again."
+        });
+        return;
+      }
+      throw error;
+    }
 
     if (!elevenResponse.ok) {
       const error = new Error(await readElevenLabsError(elevenResponse));
@@ -192,6 +213,12 @@ export async function speak(request, response, next) {
       response.status(400).json({ error: "Text too long; maximum 500 characters for streaming." });
       return;
     }
+    if (!isValidLanguageCode(language_code)) {
+      response.status(400).json({
+        error: `Unsupported language code "${language_code}". See ElevenLabs eleven_multilingual_v2 docs for supported codes.`
+      });
+      return;
+    }
 
     const expiresAt = Date.now() + 60000;
     const token = encryptToken({ text, voiceId, apiKey, language_code, voice_settings, expiresAt });
@@ -223,7 +250,10 @@ export async function streamSpeech(request, response, next) {
       return;
     }
 
-    const elevenResponse = await fetch(`${ELEVENLABS_BASE_URL}/text-to-speech/${voiceId}/stream`, {
+  const { signal: streamSignal, clear: clearStream } = createTimeoutSignal();
+  let elevenResponse;
+  try {
+    elevenResponse = await fetch(`${ELEVENLABS_BASE_URL}/text-to-speech/${voiceId}/stream`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -231,12 +261,24 @@ export async function streamSpeech(request, response, next) {
         Accept: "audio/mpeg"
       },
       body: JSON.stringify({
-  text,
-  model_id: "eleven_multilingual_v2",
-  language_code,
-  voice_settings: voice_settings
-})
+        text,
+        model_id: "eleven_multilingual_v2",
+        // Only include language_code when explicitly set; omitting it
+        // lets ElevenLabs auto-detect the language from the input text.
+        ...(language_code ? { language_code } : {}),
+        voice_settings: voice_settings,
+      })
     });
+    clearStream();
+  } catch (error) {
+    if (error.name === "AbortError") {
+      response.status(504).json({
+        error: "Speech stream timed out. Please try again."
+      });
+      return;
+    }
+    throw error;
+  }
 
     if (!elevenResponse.ok) {
       const errorText = await readElevenLabsError(elevenResponse);
