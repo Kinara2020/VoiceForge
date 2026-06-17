@@ -28,6 +28,7 @@ const ALGORITHM = "aes-256-gcm";
 
 // Validates the voice_settings object before forwarding to ElevenLabs.
 // Only known fields are allowed; unknown keys are stripped silently.
+// NaN and Infinity are explicitly rejected via Number.isFinite().
 function validateVoiceSettings(settings) {
   if (settings === undefined || settings === null) return undefined;
   if (typeof settings !== "object" || Array.isArray(settings)) {
@@ -38,24 +39,39 @@ function validateVoiceSettings(settings) {
   const validated = {};
   const { stability, similarity_boost, style, use_speaker_boost } = settings;
   if (stability !== undefined) {
-    if (typeof stability !== "number" || stability < 0 || stability > 1) {
-      const error = new Error("stability must be a number between 0 and 1.");
+    if (
+      typeof stability !== "number" ||
+      !Number.isFinite(stability) ||
+      stability < 0 ||
+      stability > 1
+    ) {
+      const error = new Error("stability must be a finite number between 0 and 1.");
       error.status = 400;
       throw error;
     }
     validated.stability = stability;
   }
   if (similarity_boost !== undefined) {
-    if (typeof similarity_boost !== "number" || similarity_boost < 0 || similarity_boost > 1) {
-      const error = new Error("similarity_boost must be a number between 0 and 1.");
+    if (
+      typeof similarity_boost !== "number" ||
+      !Number.isFinite(similarity_boost) ||
+      similarity_boost < 0 ||
+      similarity_boost > 1
+    ) {
+      const error = new Error("similarity_boost must be a finite number between 0 and 1.");
       error.status = 400;
       throw error;
     }
     validated.similarity_boost = similarity_boost;
   }
   if (style !== undefined) {
-    if (typeof style !== "number" || style < 0 || style > 1) {
-      const error = new Error("style must be a number between 0 and 1.");
+    if (
+      typeof style !== "number" ||
+      !Number.isFinite(style) ||
+      style < 0 ||
+      style > 1
+    ) {
+      const error = new Error("style must be a finite number between 0 and 1.");
       error.status = 400;
       throw error;
     }
@@ -75,18 +91,18 @@ function validateVoiceSettings(settings) {
 function encryptToken(payload) {
   const iv = crypto.randomBytes(IV_LENGTH);
   const cipher = crypto.createCipheriv(ALGORITHM, ENCRYPTION_KEY, iv);
-  
+
   let encrypted = cipher.update(JSON.stringify(payload), "utf8", "base64");
   encrypted += cipher.final("base64");
-  
+
   const authTag = cipher.getAuthTag().toString("base64");
-  
+
   const tokenData = {
     iv: iv.toString("base64"),
     tag: authTag,
     data: encrypted
   };
-  
+
   return Buffer.from(JSON.stringify(tokenData)).toString("base64url");
 }
 
@@ -94,25 +110,25 @@ function decryptToken(token) {
   try {
     const rawJson = Buffer.from(token, "base64url").toString("utf8");
     const { iv, tag, data } = JSON.parse(rawJson);
-    
+
     const decipher = crypto.createDecipheriv(
       ALGORITHM,
       ENCRYPTION_KEY,
       Buffer.from(iv, "base64")
     );
     decipher.setAuthTag(Buffer.from(tag, "base64"));
-    
+
     let decrypted = decipher.update(data, "base64", "utf8");
     decrypted += decipher.final("utf8");
-    
+
     const payload = JSON.parse(decrypted);
-    
+
     if (payload.expiresAt && Date.now() > payload.expiresAt) {
       const error = new Error("Speech stream has expired.");
       error.status = 403;
       throw error;
     }
-    
+
     return payload;
   } catch (error) {
     if (error.status === 403) {
@@ -229,7 +245,14 @@ export async function speak(request, response, next) {
 
     const validatedSettings = validateVoiceSettings(voice_settings);
     const expiresAt = Date.now() + 60000;
-    const token = encryptToken({ text, voiceId, apiKey, language_code, voice_settings: validatedSettings, expiresAt });
+    const token = encryptToken({
+      text,
+      voiceId,
+      apiKey,
+      language_code,
+      voice_settings: validatedSettings,
+      expiresAt
+    });
 
     response.json({
       speechId: token,
