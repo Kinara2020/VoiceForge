@@ -4,10 +4,12 @@ import { Camera, CircleAlert, Sliders, ChevronDown, RotateCcw } from "lucide-rea
 import TextToSpeech from "../components/TextToSpeech.jsx";
 import VideoPreview from "../components/VideoPreview.jsx";
 import VirtualCamera from "../components/VirtualCamera.jsx";
+import { LanguageSelector } from "../components/LanguageSelector.jsx";
 import useTTS from "../hooks/useTTS.js";
 import useVirtualCamera from "../hooks/useVirtualCamera.js";
 import { getActiveVoiceProfile } from "../hooks/useVoiceClone.js";
 import { useToast, ToastContainer } from "../components/useToast.jsx";
+import { loadLanguage, persistLanguage } from "../utils/languages.js";
 
 export default function Call() {
   const [webcamStream, setWebcamStream] = React.useState(null);
@@ -17,38 +19,11 @@ export default function Call() {
   const canvasRef = React.useRef(null);
   const localVideoRef = React.useRef(null);
   const [activeProfile, setActiveProfile] = React.useState(null);
-  const [language, setLanguage] = React.useState(() => {
-  try {
-    const savedLanguage = localStorage.getItem("voiceforge:language");
+  const [language, setLanguage] = React.useState(loadLanguage);
 
-    const legacyToCode = {
-      English: "en",
-      Hindi: "hi",
-      Spanish: "es",
-      French: "fr",
-      German: "de",
-      Portuguese: "pt",
-      Japanese: "ja",
-    };
-
-    const normalizedLanguage =
-      legacyToCode[savedLanguage] || savedLanguage;
-
-    return ["en", "hi", "es", "fr", "de", "pt", "ja"].includes(normalizedLanguage)
-      ? normalizedLanguage
-      : "en";
-  } catch {
-    return "en";
-  }
-});
-
-React.useEffect(() => {
-  try {
-    localStorage.setItem("voiceforge:language", language);
-  } catch {
-    // storage unavailable
-  }
-}, [language]);
+  React.useEffect(() => {
+    persistLanguage(language);
+  }, [language]);
   const [dbError, setDbError] = React.useState("");
   const { speak, status, error, audioUrl } = useTTS();
   const virtualCamera = useVirtualCamera(canvasRef);
@@ -107,18 +82,29 @@ React.useEffect(() => {
 });
 
   const handleCalibrationChange = (key, value) => {
-  if (typeof value !== "number" || isNaN(value)) return;
-  setCalibration((prev) => {
-    const updated = { ...prev, [key]: value };
-    try {
-      localStorage.setItem(
-        `voiceforge:calibration${key.charAt(0).toUpperCase() + key.slice(1)}`,
-        value.toString()
-      );
-    } catch { /* storage unavailable – continue without persisting */ }
-    return updated;
-  });
-};
+    let parsedValue = typeof value === "string" ? parseFloat(value) : value;
+    if (typeof parsedValue !== "number" || isNaN(parsedValue)) return;
+
+    // Apply strict clamping matching the slider limits based on the key
+    if (key === "xOffset") {
+      parsedValue = Math.max(-400, Math.min(400, Math.round(parsedValue)));
+    } else if (key === "yOffset") {
+      parsedValue = Math.max(-250, Math.min(150, Math.round(parsedValue)));
+    } else if (key === "scale") {
+      parsedValue = Math.max(0.5, Math.min(2.5, parsedValue));
+    }
+
+    setCalibration((prev) => {
+      const updated = { ...prev, [key]: parsedValue };
+      try {
+        localStorage.setItem(
+          `voiceforge:calibration${key.charAt(0).toUpperCase() + key.slice(1)}`,
+          parsedValue.toString()
+        );
+      } catch { /* storage unavailable – continue without persisting */ }
+      return updated;
+    });
+  };
 
   const handleResetCalibration = () => {
     const defaults = { xOffset: 0, yOffset: 0, scale: 1.0 };
@@ -326,28 +312,18 @@ React.useEffect(() => {
         )}
       </section>
       <section className="rounded-lg border border-ink/10 bg-white p-4 shadow-soft dark:border-border dark:bg-surface">
-  <label
-  htmlFor="output-language"
-  className="mb-2 block text-sm font-bold dark:text-neutral-100"
->
-  Output Language
-</label>
-
-<select
-  id="output-language"
-  value={language}
-  onChange={(e) => setLanguage(e.target.value)}
-  className="w-full rounded-md border border-ink/15 bg-cloud p-3 dark:border-border dark:bg-black dark:text-neutral-100"
->
-   <option value="en">English</option>
-<option value="hi">Hindi</option>
-<option value="es">Spanish</option>
-<option value="fr">French</option>
-<option value="de">German</option>
-<option value="pt">Portuguese</option>
-<option value="ja">Japanese</option>
-  </select>
-</section>
+        <label
+          htmlFor="output-language"
+          className="mb-3 block text-sm font-bold dark:text-neutral-100"
+        >
+          Output Language
+        </label>
+        <LanguageSelector
+          id="output-language"
+          value={language}
+          onChange={setLanguage}
+        />
+      </section>
       <div className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr_0.9fr]">
         {/* Webcam panel */}
         <section className="rounded-lg border border-ink/10 bg-white p-5 shadow-soft dark:border-border dark:bg-surface dark:shadow-soft-dk">

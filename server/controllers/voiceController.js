@@ -1,6 +1,7 @@
 // Implements ElevenLabs voice cloning and text-to-speech proxy handlers.
 import crypto from "crypto";
-import { getIsMock } from "../utils/mock.js";
+import { getIsMock } from "../utils/mock.js"; // adjust path to actual location
+import { isValidLanguageCode } from "../utils/languages.js";
 
 const ELEVENLABS_BASE_URL = "https://api.elevenlabs.io/v1";
 
@@ -234,25 +235,38 @@ export async function speak(request, response, next) {
 
     const apiKey = getIsMock() ? null : requireApiKey(request);
 
-    if (!text || !voiceId) {
+    // Fix (Issue 1): trim both fields before checking so whitespace-only
+    // strings ("   ") are treated the same as missing values and never reach
+    // encryptToken / the ElevenLabs URL interpolation.
+    const trimmedText = typeof text === "string" ? text.trim() : "";
+    const trimmedVoiceId = typeof voiceId === "string" ? voiceId.trim() : "";
+
+    if (!trimmedText && !trimmedVoiceId) {
       response.status(400).json({ error: "Both text and voice_id are required." });
       return;
     }
-    if (text.length > 500) {
+    if (!trimmedText) {
+      response.status(400).json({ error: "text is required and must not be blank." });
+      return;
+    }
+    if (!trimmedVoiceId) {
+      response.status(400).json({ error: "voice_id is required and must not be blank." });
+      return;
+    }
+    if (trimmedText.length > 500) {
       response.status(400).json({ error: "Text too long; maximum 500 characters for streaming." });
+      return;
+    }
+    if (!isValidLanguageCode(language_code)) {
+      response.status(400).json({
+        error: `Unsupported language code "${language_code}". See ElevenLabs eleven_multilingual_v2 docs for supported codes.`
+      });
       return;
     }
 
     const validatedSettings = validateVoiceSettings(voice_settings);
     const expiresAt = Date.now() + 60000;
-    const token = encryptToken({
-      text,
-      voiceId,
-      apiKey,
-      language_code,
-      voice_settings: validatedSettings,
-      expiresAt
-    });
+    const token = encryptToken({ text: trimmedText, voiceId: trimmedVoiceId, apiKey, language_code, voice_settings, expiresAt });
 
     response.json({
       speechId: token,

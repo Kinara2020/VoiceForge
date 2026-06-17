@@ -6,15 +6,21 @@ import {
   loadVoiceSettings,
   persistVoiceSettings,
 } from "../utils/voiceSettings.js";
+import {
+  loadLanguage,
+  persistLanguage,
+  getLanguageByCode,
+  LANGUAGE_STORAGE_KEY,
+} from "../utils/languages.js";
 
-import { ExternalLink, Trash2, CircleAlert, Download, Upload } from "lucide-react";
+import { ExternalLink, Trash2, CircleAlert, Download, Upload, Globe } from "lucide-react";
 import { useToast, ToastContainer } from "../components/useToast.jsx";
+import { LanguageSelector } from "../components/LanguageSelector.jsx";
 import {
   deleteVoiceProfile,
   getSavedProfiles,
 } from "../hooks/useVoiceClone.js";
 import { saveProfile } from "../utils/db.js";
-
 
 function AudioPlayback({ blob }) {
   const [audioUrl, setAudioUrl] = React.useState(null);
@@ -73,10 +79,12 @@ export default function Settings() {
 
   const defaultSettings = DEFAULT_VOICE_SETTINGS;
   const [voiceSettings, setVoiceSettings] = React.useState(loadVoiceSettings);
+  const [language, setLanguage] = React.useState(loadLanguage);
+  const selectedLangObj = getLanguageByCode(language);
 
   function saveApiKey() {
     setApiKey(apiKey);
-    showToast("API key saved", "success");
+    showToast("API key saved for this session");
   }
 
 
@@ -93,6 +101,7 @@ export default function Settings() {
         favorites: localStorage.getItem("vf_favorites"),
         quick_replies: localStorage.getItem("vf_quick_replies"),
         voiceSettings: localStorage.getItem("voiceforge:voiceSettings"),
+        language: localStorage.getItem(LANGUAGE_STORAGE_KEY),
         calibrationXOffset: localStorage.getItem("voiceforge:calibrationXOffset"),
         calibrationYOffset: localStorage.getItem("voiceforge:calibrationYOffset"),
         calibrationScale: localStorage.getItem("voiceforge:calibrationScale"),
@@ -206,6 +215,7 @@ export default function Settings() {
         favorites: "vf_favorites",
         quick_replies: "vf_quick_replies",
         voiceSettings: "voiceforge:voiceSettings",
+        language: LANGUAGE_STORAGE_KEY,
         calibrationXOffset: "voiceforge:calibrationXOffset",
         calibrationYOffset: "voiceforge:calibrationYOffset",
         calibrationScale: "voiceforge:calibrationScale",
@@ -226,6 +236,7 @@ export default function Settings() {
       const loaded = await getSavedProfiles();
       setProfiles(loaded);
       setVoiceSettings(loadVoiceSettings());
+      setLanguage(loadLanguage());
       event.target.value = "";
     } catch (err) {
       showToast("Import failed: " + (err.message || String(err)), "error");
@@ -293,7 +304,7 @@ export default function Settings() {
 
               onChange={(event) => setApiKeyInput(event.target.value)}
               className="mt-2 min-h-11 w-full rounded-md border border-ink/15 bg-cloud px-3 text-ink outline-none focus:border-moss focus:ring-4 focus:ring-mint dark:border-border dark:bg-black dark:text-neutral-100 dark:placeholder:text-neutral-500 dark:focus:border-glow dark:focus:ring-glow/25"
-
+              onKeyDown={(e) => { if (e.key === "Enter") saveApiKey(); }}
 
               placeholder="sk_..."
             />
@@ -420,6 +431,61 @@ export default function Settings() {
             </button>
           </div>
         </div>
+      </section>
+
+      {/* ── Language & Region ─────────────────────────────────────────── */}
+      <section className="rounded-lg border border-ink/10 bg-white p-5 shadow-soft dark:border-border dark:bg-surface dark:text-neutral-100 dark:shadow-soft-dk">
+        <div className="flex items-center gap-2 mb-1">
+          <Globe size={20} aria-hidden="true" className="text-moss dark:text-glow" />
+          <h2 className="text-xl font-bold">Language &amp; Region</h2>
+        </div>
+        <p className="mt-1 text-sm text-ink/65 mb-5 dark:text-muted">
+          Choose the default output language for ElevenLabs voice synthesis.
+          This applies across the Call and Compose pages.
+        </p>
+
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
+          <div className="flex-1">
+            <label
+              htmlFor="settings-language"
+              className="mb-2 block text-sm font-bold text-ink dark:text-neutral-200"
+            >
+              Default Language
+            </label>
+            <LanguageSelector
+              id="settings-language"
+              value={language}
+              onChange={(code) => {
+                setLanguage(code);
+                persistLanguage(code);
+                showToast(
+                  code
+                    ? `Language set to ${getLanguageByCode(code)?.name || code}`
+                    : "Language set to Auto-detect",
+                  "success"
+                );
+              }}
+            />
+          </div>
+          {selectedLangObj && (
+            <div className="flex items-center gap-2 rounded-lg border border-ink/10 px-4 py-3 dark:border-border">
+              <span className="text-2xl" aria-hidden="true">{selectedLangObj.flag}</span>
+              <div>
+                <p className="text-sm font-bold text-ink dark:text-neutral-200">
+                  {selectedLangObj.name}
+                </p>
+                <p className="text-xs text-ink/55 dark:text-muted">
+                  {selectedLangObj.nativeName} · <code className="font-mono">{selectedLangObj.code}</code>
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <p className="mt-3 text-xs text-ink/50 dark:text-muted">
+          Powered by ElevenLabs <code className="font-mono">eleven_multilingual_v2</code> — supports 29 languages.
+          Choose &ldquo;Auto-detect&rdquo; to let the AI infer the language from your text.
+        </p>
       </section>
 
       <section className="rounded-lg border border-ink/10 bg-white p-5 shadow-soft dark:border-border dark:bg-surface dark:text-neutral-100 dark:shadow-soft-dk">
