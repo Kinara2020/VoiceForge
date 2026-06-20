@@ -2,7 +2,7 @@ name: Issue Triage Suggestion
 
 on:
   issues:
-    types: [labeled]
+    types: [opened, labeled]
   issue_comment:
     types: [created]
 
@@ -20,11 +20,13 @@ jobs:
     if: |
       github.event.issue.pull_request == null &&
       github.actor != 'github-actions[bot]' &&
-      contains(github.event.issue.labels.*.name, 'needs maintainer review') &&
       (
         (
           github.event_name == 'issues' &&
-          github.event.label.name == 'needs maintainer review'
+          (
+            github.event.action == 'opened' ||
+            github.event.label.name == 'needs maintainer review'
+          )
         ) ||
         (
           github.event_name == 'issue_comment' &&
@@ -74,12 +76,45 @@ jobs:
               }
             }
 
-            const { data: freshIssue } = await github.rest.issues.get({
-              owner,
-              repo,
-              issue_number
-            });
+            async function sleep(ms) {
+              return new Promise(resolve => setTimeout(resolve, ms));
+            }
+
+            async function getFreshIssue() {
+              const { data } = await github.rest.issues.get({
+                owner,
+                repo,
+                issue_number
+              });
+              return data;
+            }
+
+            let freshIssue = await getFreshIssue();
+
+            if (context.eventName === 'issues' && context.payload.action === 'opened') {
+              for (let attempt = 0; attempt < 6; attempt += 1) {
+                const labels = (freshIssue.labels || []).map(label => label.name);
+                if (labels.includes('needs maintainer review')) break;
+
+                core.info('Waiting for issue validator labels before creating triage suggestion...');
+                await sleep(5000);
+                freshIssue = await getFreshIssue();
+              }
+            }
+
             const username = freshIssue.user.login;
+            const currentLabels = (freshIssue.labels || []).map(label => label.name);
+            const finalDecisionLabels = ['go ahead', 'duplicate', 'not needed', 'out of scope', 'closed', 'ready to work'];
+
+            if (!currentLabels.includes('needs maintainer review')) {
+              core.info('Skipping triage suggestion because the issue is not waiting for maintainer review.');
+              return;
+            }
+
+            if (finalDecisionLabels.some(label => currentLabels.includes(label))) {
+              core.info('Skipping triage suggestion because the issue already has a final decision or ready label.');
+              return;
+            }
 
             const suggestionLabels = [
               'suggest-go-ahead',
@@ -359,7 +394,6 @@ jobs:
               );
             }
 
-            const currentLabels = (freshIssue.labels || []).map(label => label.name);
             const issueType = currentLabels.includes('bug')
               ? 'bug'
               : currentLabels.includes('enhancement')

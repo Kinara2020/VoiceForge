@@ -1,17 +1,37 @@
-// Implements ElevenLabs voice cloning and text-to-speech proxy handlers.
+// Implements Chatterbox Multilingual TTS voice cloning and speech proxy handlers.
+// Uses the Hugging Face Gradio client to call ResembleAI/Chatterbox-Multilingual-TTS.
 import crypto from "crypto";
-import { getIsMock } from "../utils/mock.js"; // adjust path to actual location
-import { isValidLanguageCode } from "../utils/languages.js";
+import { getIsMock } from "../utils/mock.js";
+import { isValidLanguageCode, toChatterboxLanguageCode } from "../utils/languages.js";
 
-const ELEVENLABS_BASE_URL = "https://api.elevenlabs.io/v1";
-const PENDING_STREAMS_MAX = Math.max(
-  1,
-  Number(process.env.PENDING_STREAMS_MAX) || 1000
+// ---------------------------------------------------------------------------
+// In-memory voice store: maps voice_id to { name, audioBuffer, mimeType, expiresAt }
+// In production you would persist this to a database or object store.
+// ---------------------------------------------------------------------------
+const voiceStore = new Map();
+
+function parseBoundedNumber(rawValue, fallback, min) {
+  const numeric = Number(rawValue);
+  return Number.isFinite(numeric) ? Math.max(min, numeric) : fallback;
+}
+
+const MAX_STORED_VOICES = parseBoundedNumber(process.env.VOICE_STORE_MAX, 20, 1);
+const VOICE_STORE_TTL_MS = parseBoundedNumber(
+  process.env.VOICE_STORE_TTL_MS,
+  2 * 60 * 60 * 1000,
+  60_000
 );
 
-const PENDING_STREAM_TTL_MS = Math.max(
-  1,
-  Number(process.env.PENDING_STREAM_TTL_MS) || 60_000
+const PENDING_STREAMS_MAX = parseBoundedNumber(
+  process.env.PENDING_STREAMS_MAX,
+  1000,
+  1
+);
+
+const PENDING_STREAM_TTL_MS = parseBoundedNumber(
+  process.env.PENDING_STREAM_TTL_MS,
+  60_000,
+  1
 );
 
 const MOCK_AUDIO_MP3 = Buffer.from(
@@ -25,7 +45,7 @@ const MOCK_AUDIO_MP3 = Buffer.from(
 
 const STREAM_SECRET = process.env.STREAM_SECRET ?? (() => {
   console.warn(
-    "[VoiceForge] STREAM_SECRET not set — using ephemeral key. " +
+    "[VoiceForge] STREAM_SECRET not set - using ephemeral key. " +
     "All speech tokens will be invalidated on server restart. " +
     "Set STREAM_SECRET in .env for stability."
   );
@@ -40,6 +60,14 @@ function createTimeoutSignal(ms = 30000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
   return { signal: controller.signal, clear: () => clearTimeout(timer) };
+}
+
+function withTimeout(promise, ms, label) {
+  let timeoutId;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeoutId));
 }
 
 function encryptToken(payload) {
@@ -94,41 +122,103 @@ function decryptToken(token) {
   }
 }
 
-function getApiKey(request) {
-  return request.get("X-ElevenLabs-Api-Key") || process.env.ELEVENLABS_API_KEY;
-}
+// ---------------------------------------------------------------------------
+// Gradio / Chatterbox voice generation
+// ---------------------------------------------------------------------------
 
-function requireApiKey(request) {
-  const apiKey = request.get("X-ElevenLabs-Api-Key")?.trim() || process.env.ELEVENLABS_API_KEY?.trim();
-  if (!apiKey) {
-    const error = new Error(
-      "An ElevenLabs API key is required. Configure ELEVENLABS_API_KEY on the server or provide it in the X-ElevenLabs-Api-Key header."
-    );
-    error.status = 401;
-    throw error;
+/**
+ * Calls the ResembleAI/Chatterbox-Multilingual-TTS Gradio space and returns
+ * the URL of the generated audio file.
+ *
+ * @param {Buffer}  audioBuffer        Raw bytes of the reference voice recording.
+ * @param {string}  mimeType           MIME type of the reference audio (e.g. "audio/webm").
+ * @param {string}  targetText         Text to synthesize (max 300 chars).
+ * @param {string}  [languageCode]     Chatterbox language code, e.g. "en".
+ * @param {object}  [voiceSettings]    Optional Chatterbox generation settings.
+ * @returns {Promise<string>}          Direct URL to the generated audio file.
+ */
+async function generateClonedVoice(
+  audioBuffer,
+  mimeType,
+  targetText,
+  languageCode = "en",
+  voiceSettings = {}
+) {
+  const normalizedVoiceSettings =
+    voiceSettings && typeof voiceSettings === "object" ? voiceSettings : {};
+  const spaceIdentifier =
+    process.env.VOICE_ENGINE_SPACE || "ResembleAI/Chatterbox-Multilingual-TTS";
+
+  const { client } = await import("@gradio/client");
+  const app = await withTimeout(client(spaceIdentifier), 10000, "Chatterbox client init");
+
+  // Wrap the raw Buffer in a Blob so Gradio treats it as a file upload.
+  const referenceBlob = new Blob([audioBuffer], { type: mimeType });
+  const exaggeration = clampNumber(normalizedVoiceSettings.style, 0.25, 2, 0.5);
+  const cfgWeight = clampNumber(normalizedVoiceSettings.stability, 0.2, 1, 0.5);
+  const temperature = clampNumber(normalizedVoiceSettings.temperature, 0.05, 5, 0.8);
+  const seed = Number.isInteger(normalizedVoiceSettings.seed) ? normalizedVoiceSettings.seed : 0;
+
+  const result = await withTimeout(
+    app.predict("/generate_tts_audio", [
+      targetText,       // Text string to synthesize (max 300 chars)
+      languageCode,     // Language code string (e.g. "en", "hi")
+      referenceBlob,    // Reference audio Blob
+      exaggeration,     // Exaggeration intensity float (Default: 0.5)
+      temperature,      // Generation temperature float (Default: 0.8)
+      seed,             // Seed integer (0 = randomised)
+      cfgWeight         // CFG weight / Pace factor float (Default: 0.5)
+    ]),
+    30000,
+    "Chatterbox predict"
+  );
+
+  const audioUrl = result.data[0].url;
+  if (!audioUrl) {
+    throw new Error("Chatterbox returned no audio URL.");
   }
-  return apiKey;
+  return audioUrl;
 }
 
-async function readElevenLabsError(response) {
-  const text = await response.text();
-  try {
-    const payload = JSON.parse(text);
-    return payload.detail?.message || payload.detail || payload.error || text;
-  } catch {
-    return text || `ElevenLabs request failed with status ${response.status}.`;
+function clampNumber(value, min, max, fallback) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  return Math.min(max, Math.max(min, numeric));
+}
+
+/**
+ * Evicts expired voice entries and enforces the maximum limit on cached voices in memory.
+ *
+ * @param {number} [now] The current timestamp in milliseconds.
+ */
+function pruneVoiceStore(now = Date.now()) {
+  for (const [voiceId, entry] of voiceStore) {
+    if (entry.expiresAt <= now) {
+      voiceStore.delete(voiceId);
+    }
+  }
+
+  while (voiceStore.size >= MAX_STORED_VOICES) {
+    const oldestVoiceId = voiceStore.keys().next().value;
+    if (!oldestVoiceId) break;
+    voiceStore.delete(oldestVoiceId);
   }
 }
 
-function sanitizeUploadFileName(originalName) {
-  const withoutPath = String(originalName || "").split(/[/\\]/).pop();
-  const cleaned = withoutPath
-    .replace(/[^a-zA-Z0-9._-]/g, "_")
-    .replace(/^\.+/, "")
-    .slice(0, 200);
-  return cleaned || "reference.webm";
-}
+// ---------------------------------------------------------------------------
+// Route handlers
+// ---------------------------------------------------------------------------
 
+/**
+ * Express handler to clone a reference voice profile from an uploaded audio file.
+ * Caches the reference audio in memory under an ephemeral UUID.
+ *
+ * @param {object} request Express request object.
+ * @param {object} response Express response object.
+ * @param {function} next Express next middleware callback.
+ */
 export async function cloneVoice(request, response, next) {
   try {
     const audioFile = request.file;
@@ -139,7 +229,7 @@ export async function cloneVoice(request, response, next) {
     }
 
     if (getIsMock()) {
-      console.warn("[VoiceForge] MOCK_ELEVENLABS: skipping real voice clone, returning fixture.");
+      console.warn("[VoiceForge] MOCK_CHATTERBOX: skipping real voice clone, returning fixture.");
       response.json({
         voice_id: "mock-voice-id-00000000",
         name: request.body.name || "VoiceForge Voice (mock)"
@@ -147,43 +237,18 @@ export async function cloneVoice(request, response, next) {
       return;
     }
 
-    const apiKey = requireApiKey(request);
+    // Store the audio buffer server-side so it can be used during speak/stream.
+    pruneVoiceStore();
+    const voiceId = crypto.randomUUID();
+    voiceStore.set(voiceId, {
+      name: request.body.name || "VoiceForge Voice",
+      audioBuffer: audioFile.buffer,
+      mimeType: audioFile.mimetype,
+      expiresAt: Date.now() + VOICE_STORE_TTL_MS
+    });
 
-    const formData = new FormData();
-    formData.append("name", request.body.name || "VoiceForge Voice");
-    formData.append("description", "Voice profile created locally by VoiceForge.");
-    const safeFileName = sanitizeUploadFileName(audioFile.originalname);
-    formData.append("files", new Blob([audioFile.buffer], { type: audioFile.mimetype }), safeFileName);
-
-    const { signal: cloneSignal, clear: clearClone } = createTimeoutSignal();
-      let elevenResponse;
-      try {
-        elevenResponse = await fetch(`${ELEVENLABS_BASE_URL}/voices/add`, {
-        method: "POST",
-        headers: { "xi-api-key": apiKey },
-        body: formData,
-        signal: cloneSignal
-      });
-      clearClone();
-    } catch (error) {
-      if (error.name === "AbortError") {
-        response.status(504).json({
-          error: "Voice clone request timed out. Please try again."
-        });
-        return;
-      }
-      throw error;
-    }
-
-    if (!elevenResponse.ok) {
-      const error = new Error(await readElevenLabsError(elevenResponse));
-      error.status = elevenResponse.status;
-      throw error;
-    }
-
-    const payload = await elevenResponse.json();
     response.json({
-      voice_id: payload.voice_id,
+      voice_id: voiceId,
       name: request.body.name || "VoiceForge Voice"
     });
   } catch (error) {
@@ -196,6 +261,12 @@ export async function cloneVoice(request, response, next) {
 const pendingStreams = new Map();
 
 // Remove a pending stream and clear its expiry timer so timers do not pile up.
+/**
+ * Clears and removes a pending speech stream.
+ *
+ * @param {string} speechId The ID of the pending speech stream to clean up.
+ * @returns {object|undefined} The deleted stream entry if found, otherwise undefined.
+ */
 function deletePendingStream(speechId) {
   const entry = pendingStreams.get(speechId);
   if (!entry) {
@@ -206,6 +277,14 @@ function deletePendingStream(speechId) {
   return entry;
 }
 
+/**
+ * Express handler to initiate a speech request.
+ * Validates parameters and returns a signed token with a streaming audio URL.
+ *
+ * @param {object} request Express request object.
+ * @param {object} response Express response object.
+ * @param {function} next Express next middleware callback.
+ */
 export async function speak(request, response, next) {
   try {
     const {
@@ -222,11 +301,8 @@ export async function speak(request, response, next) {
       });
       return;
     }
-    const apiKey = getIsMock() ? null : requireApiKey(request);
-
     // Fix (Issue 1): trim both fields before checking so whitespace-only
-    // strings ("   ") are treated the same as missing values and never reach
-    // encryptToken / the ElevenLabs URL interpolation.
+    // strings ("   ") are treated the same as missing values.
     const trimmedText = typeof text === "string" ? text.trim() : "";
     const trimmedVoiceId = typeof voiceId === "string" ? voiceId.trim() : "";
 
@@ -242,22 +318,21 @@ export async function speak(request, response, next) {
       response.status(400).json({ error: "voice_id is required and must not be blank." });
       return;
     }
-    if (trimmedText.length > 500) {
-      response.status(400).json({ error: "Text too long; maximum 500 characters for streaming." });
+    if (trimmedText.length > 300) {
+      response.status(400).json({ error: "Text too long; maximum 300 characters for Chatterbox TTS." });
       return;
     }
     if (!isValidLanguageCode(language_code)) {
       response.status(400).json({
-        error: `Unsupported language code "${language_code}". See ElevenLabs eleven_multilingual_v2 docs for supported codes.`
+        error: `Unsupported language code "${language_code}". See Chatterbox Multilingual docs for supported codes.`
       });
       return;
     }
 
     const defaultVoiceSettings = {
       stability: 0.45,
-      similarity_boost: 0.8,
       style: 0.2,
-      use_speaker_boost: true
+      temperature: 0.8
     };
 
     const clamp01 = (v) => Math.min(1, Math.max(0, v));
@@ -270,22 +345,16 @@ export async function speak(request, response, next) {
         sanitizedSettings.stability = clamp01(voice_settings.stability);
       }
       if (
-        typeof voice_settings.similarity_boost === "number" &&
-        Number.isFinite(voice_settings.similarity_boost)
-      ) {
-        sanitizedSettings.similarity_boost = clamp01(
-          voice_settings.similarity_boost
-        );
-      }
-      if (
         typeof voice_settings.style === "number" &&
         Number.isFinite(voice_settings.style)
       ) {
         sanitizedSettings.style = clamp01(voice_settings.style);
       }
-      if (typeof voice_settings.use_speaker_boost === "boolean") {
-        sanitizedSettings.use_speaker_boost =
-          voice_settings.use_speaker_boost;
+      if (
+        typeof voice_settings.temperature === "number" &&
+        Number.isFinite(voice_settings.temperature)
+      ) {
+        sanitizedSettings.temperature = Math.min(5, Math.max(0.05, voice_settings.temperature));
       }
     }
 
@@ -302,13 +371,19 @@ export async function speak(request, response, next) {
     // Do not keep the event loop alive solely for this cleanup timer.
     timeout.unref?.();
     
-    pendingStreams.set(speechId, { text: trimmedText, voiceId: trimmedVoiceId, apiKey, mergedSettings, timeout });
+    pendingStreams.set(speechId, { text: trimmedText, voiceId: trimmedVoiceId, mergedSettings, timeout });
 
     if (getIsMock()) {
-      console.warn(`[VoiceForge] MOCK_ELEVENLABS: speak enqueued mock stream for speechId=${speechId}`);
+      console.warn(`[VoiceForge] MOCK_CHATTERBOX: speak enqueued mock stream for speechId=${speechId}`);
     }
     const expiresAt = Date.now() + 60000;
-    const token = encryptToken({ text: trimmedText, voiceId: trimmedVoiceId, apiKey, language_code, voice_settings, expiresAt });
+    const token = encryptToken({
+      text: trimmedText,
+      voiceId: trimmedVoiceId,
+      language_code,
+      voice_settings: mergedSettings,
+      expiresAt
+    });
 
     response.json({
       speechId: token,
@@ -319,6 +394,15 @@ export async function speak(request, response, next) {
   }
 }
 
+/**
+ * Express handler to stream generated Speech synthesis audio back to the client.
+ * Decrypts and validates the stream token, initiates Chatterbox synthesis via Gradio client,
+ * and proxies the generated audio chunks.
+ *
+ * @param {object} request Express request object.
+ * @param {object} response Express response object.
+ * @param {function} next Express next middleware callback.
+ */
 export async function streamSpeech(request, response, next) {
   try {
     const token = request.query.t;
@@ -326,57 +410,72 @@ export async function streamSpeech(request, response, next) {
       response.status(400).json({ error: "Missing stream token." });
       return;
     }
-    const { text, voiceId, apiKey, language_code, voice_settings } = decryptToken(token);
+    const { text, voiceId, language_code, voice_settings } = decryptToken(token);
 
     if (getIsMock()) {
-      console.warn("[VoiceForge] MOCK_ELEVENLABS: streaming mock audio");
+      console.warn("[VoiceForge] MOCK_CHATTERBOX: streaming mock audio");
       response.setHeader("Content-Type", "audio/mpeg");
       response.setHeader("Content-Length", String(MOCK_AUDIO_MP3.length));
       response.end(MOCK_AUDIO_MP3);
       return;
     }
 
-  const { signal: streamSignal, clear: clearStream } = createTimeoutSignal();
-  let elevenResponse;
-  try {
-    elevenResponse = await fetch(`${ELEVENLABS_BASE_URL}/text-to-speech/${voiceId}/stream`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "xi-api-key": apiKey,
-        Accept: "audio/mpeg"
-      },
-      body: JSON.stringify({
+    // Resolve the stored reference audio for this voice profile.
+    pruneVoiceStore();
+    const voiceEntry = voiceStore.get(voiceId);
+    if (!voiceEntry) {
+      response.status(404).json({ error: "Voice profile not found. Please re-clone your voice." });
+      return;
+    }
+
+    const chatterboxLanguage = toChatterboxLanguageCode(language_code);
+
+    // Call Chatterbox and get back a direct audio URL.
+    let audioUrl;
+    try {
+      audioUrl = await generateClonedVoice(
+        voiceEntry.audioBuffer,
+        voiceEntry.mimeType,
         text,
-        model_id: "eleven_multilingual_v2",
-        language_code,
-        voice_settings: voice_settings
-      })
-    });
-    clearStream();
-  } catch (error) {
-    if (error.name === "AbortError") {
-      response.status(504).json({
-        error: "Speech stream timed out. Please try again."
-      });
-      return;
-    }
-    throw error;
-  }
-
-    if (!elevenResponse.ok) {
-      const errorText = await readElevenLabsError(elevenResponse);
-      response.status(elevenResponse.status).send(errorText);
-      return;
+        chatterboxLanguage,
+        voice_settings
+      );
+    } catch (error) {
+      if (error.message.includes("timed out")) {
+        response.status(504).json({ error: error.message });
+        return;
+      }
+      throw error;
     }
 
-    response.setHeader("Content-Type", "audio/mpeg");
+    // Proxy the audio bytes back to the client so they don't need to reach
+    // the Gradio space directly (avoids CORS issues in the browser).
+    let upstream;
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 30000);
+      upstream = await fetch(audioUrl, { signal: controller.signal });
+      clearTimeout(timer);
+    } catch (error) {
+      if (error.name === "AbortError") {
+        response.status(504).json({ error: "Failed to fetch generated audio from Chatterbox due to timeout." });
+        return;
+      }
+      throw error;
+    }
+    if (!upstream.ok) {
+      response.status(502).json({ error: "Failed to fetch generated audio from Chatterbox." });
+      return;
+    }
+
+    const contentType = upstream.headers.get("content-type") || "audio/wav";
+    response.setHeader("Content-Type", contentType);
     response.setHeader("Transfer-Encoding", "chunked");
 
-    const reader = elevenResponse.body.getReader();
+    const reader = upstream.body.getReader();
 
     request.on("close", () => {
-      reader.cancel().catch((err) => console.error("Error cancelling ElevenLabs reader:", err));
+      reader.cancel().catch((err) => console.error("Error cancelling Chatterbox reader:", err));
     });
 
     while (true) {
@@ -390,9 +489,16 @@ export async function streamSpeech(request, response, next) {
   }
 }
 
+/**
+ * Express handler to check the status, active engine name, and target space identifier.
+ *
+ * @param {object} request Express request object.
+ * @param {object} response Express response object.
+ */
 export function getStatus(request, response) {
   response.json({
     isMock: getIsMock(),
-    hasServerKey: Boolean(process.env.ELEVENLABS_API_KEY?.trim())
+    engine: "ResembleAI/Chatterbox-Multilingual-TTS",
+    space: process.env.VOICE_ENGINE_SPACE || "ResembleAI/Chatterbox-Multilingual-TTS"
   });
 }
