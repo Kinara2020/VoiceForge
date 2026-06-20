@@ -83,14 +83,6 @@ export function VoiceQuickSettings({ defaultOpen = false }) {
     []
   );
 
-  const toggleSpeakerBoost = useCallback(() => {
-    setSettings((prev) => {
-      const next = { ...prev, use_speaker_boost: !prev.use_speaker_boost };
-      persistVoiceSettings(next);
-      return next;
-    });
-  }, []);
-
   const toggleOpen = useCallback(() => setIsOpen((prev) => !prev), []);
 
   return (
@@ -130,11 +122,11 @@ export function VoiceQuickSettings({ defaultOpen = false }) {
             onChange={updateSetting("stability")}
           />
           <SliderRow
-            id="vqs-similarity"
-            label="Similarity Boost"
-            description="Higher → closer to original voice. May add artifacts at max."
-            value={settings.similarity_boost}
-            onChange={updateSetting("similarity_boost")}
+            id="vqs-temperature"
+            label="Temperature"
+            description="Lower → steadier output. Higher → more variation."
+            value={settings.temperature}
+            onChange={updateSetting("temperature")}
           />
           <SliderRow
             id="vqs-style"
@@ -144,46 +136,8 @@ export function VoiceQuickSettings({ defaultOpen = false }) {
             onChange={updateSetting("style")}
           />
 
-          {/* ── Speaker Boost toggle ── */}
-          <div className="flex items-center justify-between rounded-lg border border-neutral-200 p-3 dark:border-border">
-            <div>
-              <p className="text-xs font-bold text-neutral-700 dark:text-neutral-300">
-                Speaker Boost
-              </p>
-              <p
-                id="vqs-speaker-boost-desc"
-                className="mt-0.5 text-[10px] leading-snug text-neutral-400 dark:text-neutral-500"
-              >
-                Boosts similarity to the reference speaker. Disable if you hear metallic artifacts.
-              </p>
-            </div>
-            <button
-              id="vqs-speaker-boost"
-              type="button"
-              role="switch"
-              aria-checked={settings.use_speaker_boost}
-              aria-describedby="vqs-speaker-boost-desc"
-              onClick={toggleSpeakerBoost}
-              className={[
-                "relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent",
-                "transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-300 focus:ring-offset-1 dark:focus:ring-offset-black",
-                settings.use_speaker_boost
-                  ? "bg-blue-500 dark:bg-blue-600"
-                  : "bg-neutral-200 dark:bg-neutral-700",
-              ].join(" ")}
-              aria-label="Toggle Speaker Boost"
-            >
-              <span
-                className={[
-                  "pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200",
-                  settings.use_speaker_boost ? "translate-x-4" : "translate-x-0",
-                ].join(" ")}
-              />
-            </button>
-          </div>
-
           <p className="text-[11px] text-neutral-400 dark:text-neutral-500">
-            Changes apply to ElevenLabs voice synthesis.{" "}
+            Changes apply to Chatterbox voice synthesis.{" "}
             <span className="font-medium text-neutral-500 dark:text-neutral-400">
               Full controls in Settings →
             </span>
